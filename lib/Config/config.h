@@ -17,4 +17,4 @@ const unsigned long DELAY_AFTER_SERIAL_INITIALIZED = 100;
 /**
  * @brief The pin where the Neo Pixel LED is connected to.
  */
-const unsigned int LED_PIN = 19;
+const unsigned int LED_PIN = LED_BUILTIN;
