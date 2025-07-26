@@ -91,6 +91,7 @@ void loop()
   {
     Serial.println("Switch moved to DEEP SLEEP while in loop. Entering sleep.");
     esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP_SEC * uS_TO_S_FACTOR);
+    turnLEDOff(LED_BUILTIN);
     esp_deep_sleep_start();
   }
 }
