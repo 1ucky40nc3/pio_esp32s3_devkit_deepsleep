@@ -1,21 +1,16 @@
 #include <Arduino.h>
 #include "esp_system.h"
 #include "esp_sleep.h"
-#include "driver/rtc_io.h" // For rtc_gpio_pulldown_en
+#include "driver/rtc_io.h" // For rtc_gpio_pulldown_en and rtc_gpio_deinit
 #include "led.h"
 
 // Define the pin connected to the Common (COM) terminal of your SPDT switch
-// IMPORTANT: For reliable detection at boot, especially for deep sleep,
-// it's best if this is an RTC GPIO, even if not directly used for wakeup,
-// as RTC GPIOs retain their state better across reset types.
-#define TSW_PIN GPIO_NUM_5 // Example RTC GPIO (e.g., GPIO32, check your board!)
-
-// Define a timer wakeup period (if you want an alternative way to wake up)
-#define TIME_TO_SLEEP_SEC 10 // Example: wake up after 10 seconds if in deep sleep
-#define uS_TO_S_FACTOR 1000000ULL
+// IMPORTANT: This MUST be an RTC GPIO for external wakeup (EXT0/EXT1) to work!
+// Common RTC GPIOs include: GPIO0, 2, 4, 12-15, 25-27, 32-39.
+// Check your ESP32 dev board's pinout for specifics.
+#define TSW_PIN GPIO_NUM_5 // Example RTC GPIO (e.g., GPIO32)
 
 // RTC_DATA_ATTR: Variable stored in RTC memory, persists through deep sleep
-// This is useful for retaining data across deep sleep cycles, like a boot counter.
 RTC_DATA_ATTR int bootCount = 0;
 
 void setup()
@@ -27,6 +22,13 @@ void setup()
   Serial.println("\n------------------------------");
   Serial.println("Boot Count: " + String(bootCount));
   Serial.println("------------------------------");
+
+  // If we woke up from EXT0, we need to deinitialize the RTC GPIO
+  // so we can use it as a regular digital pin again.
+  if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0)
+  {
+    rtc_gpio_deinit(TSW_PIN);
+  }
 
   // Configure the switch pin.
   // We use INPUT_PULLDOWN. If the switch connects to 3.3V, it reads HIGH.
@@ -43,19 +45,17 @@ void setup()
   if (switchState == LOW)
   { // Switch in "Deep Sleep" position
     Serial.println("SPDT switch set to DEEP SLEEP mode.");
-    Serial.println("Configuring timer wakeup in " + String(TIME_TO_SLEEP_SEC) + " seconds.");
 
-    // Configure timer as a wakeup source
-    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP_SEC * uS_TO_S_FACTOR);
+    // Configure EXT0 wakeup: wake up if TSW_PIN goes HIGH
+    // TSW_PIN must be an RTC GPIO.
+    // The '1' means wake on HIGH. Use '0' to wake on LOW.
+    esp_sleep_enable_ext0_wakeup(TSW_PIN, HIGH);
 
-    // Optional: You could also enable EXT1 wakeup on the TSW_PIN if you wanted
-    // to wake up if the switch position changed while sleeping.
-    // However, if the switch's purpose is to *decide* the mode at boot,
-    // a timer is often more suitable for deep sleep.
-    // If you want the switch to be an 'on-demand' wakeup, then use ext1.
-    // For this example, we'll assume the switch defines the mode at boot.
+    // This is important: ensure the internal pulldown is enabled for deep sleep
+    // so the pin isn't floating and can reliably detect HIGH.
+    rtc_gpio_pulldown_en(TSW_PIN);
 
-    Serial.println("Entering Deep Sleep now.");
+    Serial.println("Entering Deep Sleep now. Flip switch to HIGH to wake up immediately.");
     Serial.flush(); // Ensure all serial output is sent
     esp_deep_sleep_start();
   }
@@ -66,7 +66,7 @@ void setup()
 
     // --- Your normal setup tasks for continuous operation go here ---
     pinMode(LED_BUILTIN, OUTPUT);
-    turnLEDGreen(LED_BUILTIN);
+    turnLEDGreen(LED_BUILTIN); // Toggle LED
     Serial.println("LED_BUILTIN is ON.");
     // ------------------------------------------------------------------
   }
@@ -77,20 +77,21 @@ void loop()
   // This loop will only execute if the SPDT switch was in the "STAY AWAKE" position in setup()
 
   Serial.println("Looping... (LED blinking)");
-  turnLEDGreen(LED_BUILTIN);
-  // Toggle LED
+  turnLEDGreen(LED_BUILTIN); // Toggle LED
   delay(1000);
-  turnLEDBlue(LED_BUILTIN);
+  turnLEDBlue(LED_BUILTIN); // Toggle LED
   delay(1000);
 
-  // You might want to periodically check the switch state here if you
-  // want to dynamically go into deep sleep *from* the loop,
-  // without a full power cycle.
-  // For example:
+  // If you want to dynamically enter deep sleep from loop if the switch is flipped
+  // (e.g., you start in active mode, then flip the switch to put it to sleep)
+  // you can add this:
   if (digitalRead(TSW_PIN) == LOW)
   {
-    Serial.println("Switch moved to DEEP SLEEP while in loop. Entering sleep.");
-    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP_SEC * uS_TO_S_FACTOR);
+    Serial.println("Switch moved to DEEP SLEEP position while in loop. Entering sleep.");
+    Serial.flush();
+    // Configure EXT0 wakeup before going to sleep
+    esp_sleep_enable_ext0_wakeup(TSW_PIN, HIGH); // Still wake on HIGH
+    rtc_gpio_pulldown_en(TSW_PIN);               // Ensure pulldown is enabled during sleep
     turnLEDOff(LED_BUILTIN);
     esp_deep_sleep_start();
   }
