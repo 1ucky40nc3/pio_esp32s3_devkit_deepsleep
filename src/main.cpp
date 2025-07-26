@@ -1,114 +1,96 @@
 #include <Arduino.h>
-#include <esp_sleep.h>
-#include "config.h" // Assuming this file defines SERIAL_BAUD, DELAY_AFTER_SERIAL_INITIALIZED, and LED_PIN
-#include "led.h"    // Assuming this file defines turnLEDRed() and turnLEDGreen()
+#include "esp_system.h"
+#include "esp_sleep.h"
+#include "driver/rtc_io.h" // For rtc_gpio_pulldown_en
+#include "led.h"
 
-static const int TSW_PIN = 5; // set input pin for switch
+// Define the pin connected to the Common (COM) terminal of your SPDT switch
+// IMPORTANT: For reliable detection at boot, especially for deep sleep,
+// it's best if this is an RTC GPIO, even if not directly used for wakeup,
+// as RTC GPIOs retain their state better across reset types.
+#define TSW_PIN GPIO_NUM_5 // Example RTC GPIO (e.g., GPIO32, check your board!)
 
-// Define the external wakeup pin and its mask
-const int ext_wakeup_pin = TSW_PIN;
-// We'll configure this to wake on HIGH for a button connected to 3.3V with INPUT_PULLDOWN
-const uint64_t ext_wakeup_pin_mask = 1ULL << ext_wakeup_pin;
+// Define a timer wakeup period (if you want an alternative way to wake up)
+#define TIME_TO_SLEEP_SEC 10 // Example: wake up after 10 seconds if in deep sleep
+#define uS_TO_S_FACTOR 1000000ULL
 
-// Flag to indicate if we've just woken up from deep sleep by the button
-// We'll use a global to persist this across setup() and loop() effectively for initial behavior
-RTC_DATA_ATTR bool wokeFromButton = false; // RTC_DATA_ATTR preserves value across deep sleep
+// RTC_DATA_ATTR: Variable stored in RTC memory, persists through deep sleep
+// This is useful for retaining data across deep sleep cycles, like a boot counter.
+RTC_DATA_ATTR int bootCount = 0;
 
 void setup()
 {
-  Serial.begin(SERIAL_BAUD);
-  // Add a longer delay here to ensure serial output catches up, especially after a reset
-  delay(DELAY_AFTER_SERIAL_INITIALIZED);
-  Serial.println("--- ESP32 Startup ---");
+  Serial.begin(115200);
+  delay(1000); // Give time for serial monitor to connect
 
-  pinMode(TSW_PIN, INPUT_PULLDOWN); // Use INPUT_PULLDOWN: Pin is LOW by default, HIGH when button (to 3.3V) is pressed.
+  ++bootCount;
+  Serial.println("\n------------------------------");
+  Serial.println("Boot Count: " + String(bootCount));
+  Serial.println("------------------------------");
 
-  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+  // Configure the switch pin.
+  // We use INPUT_PULLDOWN. If the switch connects to 3.3V, it reads HIGH.
+  // If the switch connects to GND, it reads LOW (pulled down by internal resistor).
+  pinMode(TSW_PIN, INPUT_PULLDOWN);
 
-  if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT1)
-  {
-    Serial.println("Woke up from deep sleep by external (EXT1) pin!");
-    wokeFromButton = true; // Set flag to indicate we just woke via button
-    Serial.print("Current TSW_PIN state immediately after wakeup: ");
-    Serial.println(digitalRead(TSW_PIN)); // Debugging: See what the pin reads right now
-  }
-  else if (wakeup_reason == ESP_SLEEP_WAKEUP_UNDEFINED)
-  {
-    Serial.println("Initial boot or wake up from reset (not deep sleep).");
-    wokeFromButton = false; // Not woken by button
+  // Read the state of the switch immediately
+  int switchState = digitalRead(TSW_PIN);
+  Serial.print("TSW_PIN (GPIO ");
+  Serial.print(TSW_PIN);
+  Serial.print(") state: ");
+  Serial.println(switchState == HIGH ? "HIGH (Stay Awake)" : "LOW (Go to Deep Sleep)");
+
+  if (switchState == LOW)
+  { // Switch in "Deep Sleep" position
+    Serial.println("SPDT switch set to DEEP SLEEP mode.");
+    Serial.println("Configuring timer wakeup in " + String(TIME_TO_SLEEP_SEC) + " seconds.");
+
+    // Configure timer as a wakeup source
+    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP_SEC * uS_TO_S_FACTOR);
+
+    // Optional: You could also enable EXT1 wakeup on the TSW_PIN if you wanted
+    // to wake up if the switch position changed while sleeping.
+    // However, if the switch's purpose is to *decide* the mode at boot,
+    // a timer is often more suitable for deep sleep.
+    // If you want the switch to be an 'on-demand' wakeup, then use ext1.
+    // For this example, we'll assume the switch defines the mode at boot.
+
+    Serial.println("Entering Deep Sleep now.");
+    Serial.flush(); // Ensure all serial output is sent
+    esp_deep_sleep_start();
   }
   else
-  {
-    Serial.printf("Woke up due to other reason: %d\n", wakeup_reason);
-    wokeFromButton = false;
-  }
+  { // switchState == HIGH, Switch in "Stay Awake" position
+    Serial.println("SPDT switch set to STAY AWAKE mode.");
+    Serial.println("Continuing with normal execution (loop() function).");
 
-  // --- Decision Logic for Initial State ---
-  // If we just woke up from the button, or it's an initial boot and the button IS pressed,
-  // we want to stay awake and enter the loop.
-  // Otherwise, if it's an initial boot and the button is NOT pressed, go to sleep.
-
-  if (wokeFromButton)
-  {
-    Serial.println("Proceeding to loop() as we just woke up via button.");
+    // --- Your normal setup tasks for continuous operation go here ---
+    pinMode(LED_BUILTIN, OUTPUT);
+    turnLEDGreen(LED_BUILTIN);
+    Serial.println("LED_BUILTIN is ON.");
+    // ------------------------------------------------------------------
   }
-  else
-  {
-    // This is an initial power-on or a non-EXT1 reset.
-    // Check the current button state to decide.
-    int initial_tsw_state = digitalRead(TSW_PIN);
-    Serial.print("Initial boot TSW_State: ");
-    Serial.println(initial_tsw_state);
-
-    if (initial_tsw_state == 0)
-    { // Button is NOT pressed on initial boot
-      Serial.println("Initial boot, button not pressed. Entering deep sleep immediately.");
-      // Configure to wake up if the button is pressed (goes HIGH)
-      esp_sleep_enable_ext1_wakeup(ext_wakeup_pin_mask, ESP_EXT1_WAKEUP_ANY_HIGH);
-      esp_deep_sleep_start(); // Go to deep sleep
-    }
-    else
-    { // Button IS pressed on initial boot (e.g., held down)
-      Serial.println("Initial boot, button pressed. Proceeding to loop().");
-    }
-  }
-  // If we reach here, it means we are intended to stay awake and run the loop.
-  // Reset the flag so that loop() can evaluate normally after the first cycle.
-  wokeFromButton = false; // Reset the flag for the next cycle, loop() will manage.
 }
 
 void loop()
 {
-  // If we just woke from the button, let's ensure we stay awake for a bit
-  // even if the button is released instantly.
-  // We can add a simple state machine or a timeout.
+  // This loop will only execute if the SPDT switch was in the "STAY AWAKE" position in setup()
 
-  // For this example, let's keep it simpler but effective:
-  // If the button is currently held down (TSW_State == 1), stay awake and do active tasks.
-  // If the button is released (TSW_State == 0), then we consider going to sleep.
+  Serial.println("Looping... (LED blinking)");
+  turnLEDGreen(LED_BUILTIN);
+  // Toggle LED
+  delay(1000);
+  turnLEDBlue(LED_BUILTIN);
+  delay(1000);
 
-  int TSW_State = digitalRead(TSW_PIN);
-  Serial.print("TSW_State in loop: ");
-  Serial.println(TSW_State);
-
-  if (TSW_State == 1) // Button IS pressed (or was pressed recently for debounce)
+  // You might want to periodically check the switch state here if you
+  // want to dynamically go into deep sleep *from* the loop,
+  // without a full power cycle.
+  // For example:
+  if (digitalRead(TSW_PIN) == LOW)
   {
-    turnLEDGreen(LED_PIN);
-    Serial.println("TSW_State is 1 (button pressed). Executing active code.");
-    // --- Your active code goes here ---
-    // This is where you would do your sensor readings, network communication, etc.
-    // As long as the button is held, this part of the loop will execute.
-    // If you only want it to run once per "wake" cycle, you'd need a flag
-    // to track if the task has already been performed since waking.
-    // ---------------------------------
+    Serial.println("Switch moved to DEEP SLEEP while in loop. Entering sleep.");
+    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP_SEC * uS_TO_S_FACTOR);
+    esp_deep_sleep_start();
   }
-  else // TSW_State is 0 (button released)
-  {
-    turnLEDRed(LED_PIN);
-    Serial.println("TSW_State is 0 (button released). Preparing to enter deep sleep...");
-    // Configure to wake up when the button is pressed (goes HIGH)
-    esp_sleep_enable_ext1_wakeup(ext_wakeup_pin_mask, ESP_EXT1_WAKEUP_ANY_HIGH);
-    esp_deep_sleep_start(); // Enter deep sleep
-  }
-  delay(300); // Small delay to debounce and make serial output readable
 }
