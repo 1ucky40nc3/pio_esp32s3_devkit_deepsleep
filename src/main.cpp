@@ -15,17 +15,7 @@ void setup()
   delay(DELAY_AFTER_SERIAL_INITIALIZED);
   Serial.println("Serial start");
 
-  turnLEDBlue(LED_PIN);
-  TSW_State = digitalRead(TSW_PIN); // read state of switch
-
-  if (TSW_State == 0)
-  {
-    pinMode(TSW_PIN, INPUT_PULLDOWN);
-  }
-  else
-  {
-    pinMode(TSW_PIN, INPUT_PULLUP);
-  }
+  pinMode(TSW_PIN, INPUT_PULLDOWN);
 }
 
 void loop()
@@ -36,13 +26,11 @@ void loop()
 
   if (TSW_State == 0)
   {
-    turnLEDGreen(LED_PIN);
-    // pinMode(5, INPUT_PULLUP);
+    turnLEDRed(LED_PIN);
   }
   else
   {
-    turnLEDRed(LED_PIN);
-    // pinMode(5, INPUT_PULLDOWN);
+    turnLEDGreen(LED_PIN);
   }
   delay(300);
 }

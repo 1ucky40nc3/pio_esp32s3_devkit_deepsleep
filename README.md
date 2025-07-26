@@ -24,6 +24,20 @@ Run the `pio check` command to do a static code analysis to check if everything 
 
 You can find sections below on how to handle [configuration](#configuration) and [secrets](#secrets) down below. Make to follow the instructions and you should be good to go.
 
+### Connect the Hardware
+
+For the project you need to have a:
+
+- [ESP32-S3-DevKitC-1]
+- [SPDT (Single Pole Double Throw) switch]
+
+Connect the [SPDT (Single Pole Double Throw) switch] to the [ESP32-S3-DevKitC-1] using the following layout:
+
+| [SPDT (Single Pole Double Throw) switch] | Cable Color | [ESP32-S3-DevKitC-1] |
+| ---------------------------------------- | ----------- | -------------------- |
+| Left                                     | Red         | 3.3V                 |
+| Middle                                   | Green       | 5                    |
+
 ### Build and Upload the Code to the [ESP32-S3-DevKitC-1]
 
 After installation and initialization you may build and upload the code to your device. Connect the Ardunino Nano ESP32 via USB. Then run the following commands (in a PlatformIO terminal):
@@ -69,6 +83,8 @@ Set the configuration in the [config.h](lib/Config/config.h) header file. Use th
 
 - [PlatformIO]
 - [ESP32-S3-DevKitC-1]
+- [SPDT (Single Pole Double Throw) switch]
 
 [PlatformIO]: https://platformio.org/
 [ESP32-S3-DevKitC-1]: https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp32-s3-devkitc-1/user_guide_v1.1.html#hardware-reference
+[SPDT (Single Pole Double Throw) switch]: https://arduino.stackexchange.com/questions/75684/how-to-use-this-3-pin-slide-switch
